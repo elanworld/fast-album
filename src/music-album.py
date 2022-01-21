@@ -15,7 +15,6 @@ import math
 import moviepy.audio.fx.all
 
 
-
 class FfmpegPlugin:
     def __init__(self):
         self.t = time.time()
