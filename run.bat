@@ -1,1 +1,0 @@
-pyinstaller --hidden-import=moviepy.editor -p ..\..\.. src\music-album.py
