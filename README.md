@@ -7,4 +7,3 @@
 ##  照片速度跟随背景音乐智能变化
 
 最新下载页面：[点我](https://github.com/elanworld/music-album/releases)
-打包地址：[点我](https://github.com/elanworld/music-album/releases/download/v1.0/music-album.exe)
