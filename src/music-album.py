@@ -1,6 +1,43 @@
 # 根据图片和音乐合成带节奏的相册视频
-from typing import Tuple, Union, Any
+# for pyinstaller enviroment
+from moviepy.audio.fx.audio_fadein import audio_fadein
+from moviepy.audio.fx.audio_fadeout import audio_fadeout
+from moviepy.audio.fx.audio_left_right import audio_left_right
+from moviepy.audio.fx.audio_loop import audio_loop
+from moviepy.audio.fx.audio_normalize import audio_normalize
+from moviepy.audio.fx.volumex import volumex
+from moviepy.video.fx.accel_decel import accel_decel
+from moviepy.video.fx.blackwhite import blackwhite
+from moviepy.video.fx.blink import blink
+from moviepy.video.fx.colorx import colorx
+from moviepy.video.fx.crop import crop
+from moviepy.video.fx.even_size import even_size
+from moviepy.video.fx.fadein import fadein
+from moviepy.video.fx.fadeout import fadeout
+from moviepy.video.fx.freeze import freeze
+from moviepy.video.fx.freeze_region import freeze_region
+from moviepy.video.fx.gamma_corr import gamma_corr
+from moviepy.video.fx.headblur import headblur
+from moviepy.video.fx.invert_colors import invert_colors
+from moviepy.video.fx.loop import loop
+from moviepy.video.fx.lum_contrast import lum_contrast
+from moviepy.video.fx.make_loopable import make_loopable
+from moviepy.video.fx.margin import margin
+from moviepy.video.fx.mask_and import mask_and
+from moviepy.video.fx.mask_color import mask_color
+from moviepy.video.fx.mask_or import mask_or
+from moviepy.video.fx.mirror_x import mirror_x
+from moviepy.video.fx.mirror_y import mirror_y
+from moviepy.video.fx.painting import painting
+from moviepy.video.fx.resize import resize
+from moviepy.video.fx.rotate import rotate
+from moviepy.video.fx.scroll import scroll
+from moviepy.video.fx.speedx import speedx
+from moviepy.video.fx.supersample import supersample
+from moviepy.video.fx.time_mirror import time_mirror
+from moviepy.video.fx.time_symmetrize import time_symmetrize
 
+from typing import Tuple, Union, Any
 import moviepy.editor
 from moviepy.video.fx.speedx import speedx
 import wave
@@ -198,10 +235,9 @@ class MovieLib(FfmpegPlugin):
         self.audio_leader = True
 
     def set_out(self, directory):
-        dir_ = os.path.split(directory)[0]
-        self.imageVideo = os.path.join(dir_, "pic2video.mp4")
-        self.audio_file = os.path.join(dir_, "pic2video.wav")
-        self.speed_video_file = os.path.join(dir_, f"{os.path.basename(dir_)}.mp4")
+        self.imageVideo = os.path.join(directory, "pic2video.mp4")
+        self.audio_file = os.path.join(directory, "pic2video.wav")
+        self.speed_video_file = os.path.join(directory, f"{directory}.mp4")
 
     def add_bgm(self, audio_dir):
         self.audio_lst.append(audio_dir)
@@ -350,6 +386,7 @@ class MovieLib(FfmpegPlugin):
         video_clip.audio = audio_clip
         video_clip.write_videofile(self.speed_video_file, fps=5)
         os.remove(self.audio_file)
+        return self.speed_video_file
 
     def image2clip(self, width=1080 * 4 / 3, height=1080, duration=0.25):
         fps = 1.0 / duration
@@ -430,7 +467,7 @@ class MovieLib(FfmpegPlugin):
         通过bgm识别播放节奏，生成新的clip
         :return:
         """
-        self.image2speed_video()
+        return self.image2speed_video()
 
 
 if __name__ == "__main__":
@@ -438,16 +475,19 @@ if __name__ == "__main__":
     pic to video clip
     """
     movie = MovieLib()
-    for i in range(6):
-        directory = gui.select_dir("多个图片目录,取消代表则选择完成")
-        if directory:
-            movie.add_pic(directory)
-        else:
-            break
-    for i in range(6):
-        file = gui.select_file("多个音乐文件,取消代表则选择完成")
+    directory = gui.select_dir("选择图片目录")
+    movie.add_pic(directory)
+    num = 0
+    try:
+        num = int(gui.input_msg("输入背景音乐个数"))
+    except:
+        gui.message().showwarning(title="输入个数格式不正确")
+        exit(1)
+    for i in range(num):
+        file = gui.select_file("选择音乐文件")
         if file:
             movie.add_bgm(file)
         else:
             break
-    movie.run()
+    video_path = movie.run()
+    gui.message().showinfo(title="完成", message=f"文件保存在：{video_path}")
