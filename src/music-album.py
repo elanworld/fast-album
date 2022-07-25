@@ -1,5 +1,7 @@
 # 根据图片和音乐合成带节奏的相册视频
 # for pyinstaller enviroment
+from tkinter.ttk import Progressbar
+
 from moviepy.audio.fx.audio_fadein import audio_fadein
 from moviepy.audio.fx.audio_fadeout import audio_fadeout
 from moviepy.audio.fx.audio_left_right import audio_left_right
@@ -194,7 +196,7 @@ def compute_time_line(np_time: np.ndarray, np_speed: np.ndarray, clips: list, au
     default_var = audio_duration / len(clips)
     change_var = 0.01
     durations = []
-    while True:
+    while range(1000000):
         durations.clear()
         for _ in clips:
             like_index = get_current_index(np_time, sum(durations))
@@ -209,8 +211,6 @@ def compute_time_line(np_time: np.ndarray, np_speed: np.ndarray, clips: list, au
         got = math.fabs(total - audio_duration) < 1
         if got:
             break
-        else:
-            change_var *= 0.8
     if len(sys.argv) >= 3 and sys.argv[2] == "plot":
         from common import tools
         data = []
@@ -375,6 +375,7 @@ class MovieLib(FfmpegPlugin):
         self.image_list.sort()
         image_clips = []
         for i in range(len(self.image_list)):
+            yield i / len(self.image_list) / 4
             image_clip = moviepy.editor.ImageClip(self.image_list[i])
             image_clip.start = sum(time_line[0:i])
             image_clip.duration = time_line[i]
@@ -383,8 +384,10 @@ class MovieLib(FfmpegPlugin):
             image_clips.append(image_clip)
 
         video_clip = moviepy.editor.concatenate_videoclips(image_clips)
+        yield 1 / 2
         video_clip.audio = audio_clip
         video_clip.write_videofile(self.speed_video_file, fps=5)
+        yield 1
         os.remove(self.audio_file)
         return self.speed_video_file
 
@@ -474,14 +477,19 @@ if __name__ == "__main__":
     """
     pic to video clip
     """
+    win = gui.ComWin()
+    progressbar = Progressbar(win.root)
+    progressbar.pack()
     movie = MovieLib()
     directory = gui.select_dir("选择图片目录")
     movie.add_pic(directory)
     num = 0
     try:
-        num = int(gui.input_msg("输入背景音乐个数"))
-    except:
+        num = int(gui.input_msg("输入背景音乐个数",1))
+    except Exception as e:
+        print(e)
         gui.message().showwarning(title="输入个数格式不正确")
+        win.root.quit()
         exit(1)
     for i in range(num):
         file = gui.select_file("选择音乐文件")
@@ -489,5 +497,7 @@ if __name__ == "__main__":
             movie.add_bgm(file)
         else:
             break
-    video_path = movie.run()
-    gui.message().showinfo(title="完成", message=f"文件保存在：{video_path}")
+    for i in movie.run():
+        progressbar["value"] = i * 100
+    gui.message().showinfo(title="完成", message=f"文件保存在：{movie.speed_video_file}")
+    win.root.quit()
