@@ -243,7 +243,7 @@ class MovieLib(FfmpegPlugin):
         self.audio_lst.append(audio_dir)
 
     def add_pic(self, pic_dir):
-        self.image_list.extend(sorted(python_box.dir_list(pic_dir, "jpg", walk=True)))
+        self.image_list.extend(sorted(python_box.dir_list(pic_dir, "jpg$", walk=True)))
         if not self.speed_video_file:
             self.set_out(pic_dir)
 
@@ -477,27 +477,31 @@ if __name__ == "__main__":
     """
     pic to video clip
     """
-    win = gui.ComWin()
-    progressbar = Progressbar(win.root)
-    progressbar.pack()
-    movie = MovieLib()
+    win = gui.ComWin(title="电子视频相册")
+    movie_tool = MovieLib()
+    win.add_text("1、选择图片目录。")
     directory = gui.select_dir("选择图片目录")
-    movie.add_pic(directory)
-    num = 0
+    movie_tool.add_pic(directory)
+    bgm_num = 0
     try:
-        num = int(gui.input_msg("输入背景音乐个数",1))
+        win.add_text("2、选择音乐个数。")
+        bgm_num = int(gui.input_msg("输入背景音乐个数", 1))
     except Exception as e:
         print(e)
         gui.message().showwarning(title="输入个数格式不正确")
         win.root.quit()
         exit(1)
-    for i in range(num):
+    for i in range(bgm_num):
+        win.add_text("3、选择音乐文件。")
         file = gui.select_file("选择音乐文件")
         if file:
-            movie.add_bgm(file)
+            movie_tool.add_bgm(file)
         else:
             break
-    for i in movie.run():
+    progressbar = Progressbar(win.root)
+    progressbar.pack()
+    win.add_text(rf"生成中。。。")
+    for i in movie_tool.run():
         progressbar["value"] = i * 100
-    gui.message().showinfo(title="完成", message=f"文件保存在：{movie.speed_video_file}")
-    win.root.quit()
+    win.add_text(rf"4、完成，生成视频在。{movie_tool.speed_video_file}")
+    gui.message().showinfo(title="完成", message=f"文件保存在：{movie_tool.speed_video_file}")
