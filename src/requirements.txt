@@ -3,3 +3,4 @@ moviepy==1.0.2
 progressbar
 psutil
 pyinstaller
+librosa
