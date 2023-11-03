@@ -194,16 +194,16 @@ class MovieLib(FfmpegPlugin):
         self.sens = 0.6
 
     def set_out(self, directory):
-        self.temp_audio_file = os.path.join(directory, "pic2video.wav")
-        self.out_video_file = os.path.join(directory, f"{directory}.mp4")
+        self.temp_audio_file = os.path.join(directory, "tmp.wav")
+        self.out_video_file = os.path.join(directory, f"相册视频.mp4")
 
-    def add_bgm(self, audio_dir):
-        self.audio_lst.append(audio_dir)
+    def add_bgm(self, audio_file):
+        self.audio_lst.append(audio_file)
+        if not self.out_video_file:
+            self.set_out(os.path.dirname(audio_file))
 
     def add_pic(self, pic_dir):
         self.image_list.extend(sorted(python_box.dir_list(pic_dir, "jpg$", walk=True)))
-        if not self.out_video_file:
-            self.set_out(pic_dir)
 
     def audio2data(self, audio):
         """
@@ -298,11 +298,12 @@ class MovieLib(FfmpegPlugin):
         audioTime, wave_data = self.audio2data(self.temp_audio_file)
         np_time, np_speed = self.frame2speed(audioTime, wave_data)
         time_line = compute_time_line(np_time, np_speed, self.image_list, audio_clip.duration)
+        yield 1 / 4
 
         self.image_list.sort()
         image_clips = []
         for i in range(len(self.image_list)):
-            yield i / len(self.image_list) / 4
+            yield 1 / 4 + i / len(self.image_list) * 1 / 2
             image_clip = moviepy.editor.ImageClip(self.image_list[i])
             image_clip.start = sum(time_line[0:i])
             image_clip.duration = time_line[i]
@@ -311,7 +312,6 @@ class MovieLib(FfmpegPlugin):
             image_clips.append(image_clip)
 
         video_clip = moviepy.editor.concatenate_videoclips(image_clips)
-        yield 1 / 2
         video_clip.audio = audio_clip
         video_clip.write_videofile(self.out_video_file, fps=5)
         yield 1
@@ -335,20 +335,24 @@ class MovieLib(FfmpegPlugin):
         audio_clip = moviepy.editor.concatenate_audioclips(audio_clips)
         audio_clip.write_audiofile(self.temp_audio_file)
         time_line = beat_times(self.temp_audio_file)
-        yield 1/4
+        audio_clip.duration = time_line[-1]
+        yield 1 / 4
         self.image_list.sort()
         image_clips = []
+        # 设置图片时长
         for i in range(len(self.image_list)):
-            yield 1/4 + i / len(self.image_list) * 1 / 2
+            yield 1 / 4 + i / len(self.image_list) * 1 / 2
             image_clip = moviepy.editor.ImageClip(self.image_list[i])
+            if i + 1 > len(time_line) - 1:
+                break
             image_clip.start = time_line[i]
             image_clip.duration = time_line[i + 1] - time_line[i]
             image_clip.fps = 1
             image_clip = self.crop_clip(image_clip, width, height)
             image_clips.append(image_clip)
-
         video_clip = moviepy.editor.concatenate_videoclips(image_clips)
         yield 3 / 4
+        audio_clip.duration = video_clip.duration
         video_clip.audio = audio_clip
         video_clip.write_videofile(self.out_video_file, fps=5)
         yield 1
@@ -391,12 +395,15 @@ if __name__ == "__main__":
 
 
     def on_button_click():
+        if len(movie_tool.image_list) == 0 or len(movie_tool.audio_lst) == 0:
+            gui.message().showinfo(title="配置未完成", message=f"未配置图片和背景音乐")
+            return
         progressbar = Progressbar(win.root)
         win.add_text(rf"生成中。。。")
         progressbar.pack()
         for i in movie_tool.run(mode.get('')):
             progressbar["value"] = i * 100
-        win.add_text(rf"4、完成，生成视频在。{movie_tool.out_video_file}")
+        win.add_text(rf"完成!生成视频在 {movie_tool.out_video_file}")
         gui.message().showinfo(title="完成", message=f"文件保存在：{movie_tool.out_video_file}")
 
 
