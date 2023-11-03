@@ -1,57 +1,20 @@
 # 根据图片和音乐合成带节奏的相册视频
 # for pyinstaller enviroment
-from tkinter.ttk import Progressbar
-
-from moviepy.audio.fx.audio_fadein import audio_fadein
-from moviepy.audio.fx.audio_fadeout import audio_fadeout
-from moviepy.audio.fx.audio_left_right import audio_left_right
-from moviepy.audio.fx.audio_loop import audio_loop
-from moviepy.audio.fx.audio_normalize import audio_normalize
-from moviepy.audio.fx.volumex import volumex
-from moviepy.video.fx.accel_decel import accel_decel
-from moviepy.video.fx.blackwhite import blackwhite
-from moviepy.video.fx.blink import blink
-from moviepy.video.fx.colorx import colorx
-from moviepy.video.fx.crop import crop
-from moviepy.video.fx.even_size import even_size
-from moviepy.video.fx.fadein import fadein
-from moviepy.video.fx.fadeout import fadeout
-from moviepy.video.fx.freeze import freeze
-from moviepy.video.fx.freeze_region import freeze_region
-from moviepy.video.fx.gamma_corr import gamma_corr
-from moviepy.video.fx.headblur import headblur
-from moviepy.video.fx.invert_colors import invert_colors
-from moviepy.video.fx.loop import loop
-from moviepy.video.fx.lum_contrast import lum_contrast
-from moviepy.video.fx.make_loopable import make_loopable
-from moviepy.video.fx.margin import margin
-from moviepy.video.fx.mask_and import mask_and
-from moviepy.video.fx.mask_color import mask_color
-from moviepy.video.fx.mask_or import mask_or
-from moviepy.video.fx.mirror_x import mirror_x
-from moviepy.video.fx.mirror_y import mirror_y
-from moviepy.video.fx.painting import painting
-from moviepy.video.fx.resize import resize
-from moviepy.video.fx.rotate import rotate
-from moviepy.video.fx.scroll import scroll
-from moviepy.video.fx.speedx import speedx
-from moviepy.video.fx.supersample import supersample
-from moviepy.video.fx.time_mirror import time_mirror
-from moviepy.video.fx.time_symmetrize import time_symmetrize
-
-from typing import Tuple, Union, Any
-import moviepy.editor
-from moviepy.video.fx.speedx import speedx
-import wave
-import numpy as np
 import re
-from progressbar import *
-from common import python_box
-from common import gui
-import psutil
-import time
-import math
+import threading
+import wave
+from tkinter.ttk import Progressbar
+from typing import Tuple, Union, Any
+
 import moviepy.audio.fx.all
+import moviepy.editor
+import numpy as np
+from moviepy.video.fx.speedx import speedx
+from progressbar import *
+
+from beat_catch import beat_times
+from common import gui
+from common import python_box
 
 
 class FfmpegPlugin:
@@ -191,7 +154,7 @@ def compute_time_line(np_time: np.ndarray, np_speed: np.ndarray, clips: list, au
     :param np_speed:
     :param clips:
     :param audio_duration:
-    :return:
+    :return: durations[]
     """
     default_var = audio_duration / len(clips)
     change_var = 0.01
@@ -225,29 +188,29 @@ class MovieLib(FfmpegPlugin):
         super().__init__()
         self.image_list = []
         self.audio_lst = []
-        self.imageVideo = None
-        self.audio_file = None
-        self.speed_video_file = None
-        self.temp_videos = []
+        self.temp_audio_file = None
+        self.out_video_file = None
         # 速度变化敏感度
         self.sens = 0.6
-        self.change_speed_time = 0.8
-        self.audio_leader = True
 
     def set_out(self, directory):
-        self.imageVideo = os.path.join(directory, "pic2video.mp4")
-        self.audio_file = os.path.join(directory, "pic2video.wav")
-        self.speed_video_file = os.path.join(directory, f"{directory}.mp4")
+        self.temp_audio_file = os.path.join(directory, "pic2video.wav")
+        self.out_video_file = os.path.join(directory, f"{directory}.mp4")
 
     def add_bgm(self, audio_dir):
         self.audio_lst.append(audio_dir)
 
     def add_pic(self, pic_dir):
         self.image_list.extend(sorted(python_box.dir_list(pic_dir, "jpg$", walk=True)))
-        if not self.speed_video_file:
+        if not self.out_video_file:
             self.set_out(pic_dir)
 
     def audio2data(self, audio):
+        """
+        获取音频数据
+        :param audio:
+        :return:
+        """
         f = wave.open(audio, 'rb')
         params = f.getparams()
         nchannels, sampwidth, self.framerate, nframes = params[:4]
@@ -295,50 +258,14 @@ class MovieLib(FfmpegPlugin):
         np_speed = np_speed / np.mean(np_speed)
         return np_time, np_speed
 
-    def video_speed_with_audio(self):
-        # 视频速度匹配音频节奏 适用视频为重复性图片或者平调速度
-        sys.setrecursionlimit(10000000)
-        video = moviepy.editor.VideoFileClip(self.imageVideo)
-        video.audio.write_audiofile(self.audio_file)
-        audioTime, wave_data = self.audio2data(self.audio_file)
-        np_time, np_speed = self.frame2speed(audioTime, wave_data,
-                                             f_duration=int(self.framerate * self.change_speed_time))
-        # 处理视频
-        bar_setting = ['change speed: ', Percentage(), Bar("#"), Timer(), ' ', ETA()]
-        speed_clip = moviepy.editor.VideoFileClip(self.imageVideo)  # initial clip
-        audio_clip = speed_clip.audio
-        bar = ProgressBar(widgets=bar_setting, maxval=len(np_speed)).start()
-        bar_update_tie = 1
-        for i in range(len(np_speed)):
-            bar.update(bar_update_tie)
-            bar_update_tie += 1
-            speed = np_speed[i]
-            t = np_time[i]
-            speed_clip = clip_speed_change(speed_clip, speed, t, t + self.change_speed_time)  # 分段变速
-            np_time = np.append(np_time, t)
-        speed_clip.audio = audio_clip
-        print(self.speed_video_file)
-        video_without_audio = python_box.FileSys().get_outfile(self.speed_video_file, "no_audio")
-        speed_clip.write_videofile(video_without_audio, audio=False)
-
-        speed_clip = moviepy.editor.VideoFileClip(video_without_audio)  # solve cant write audio
-        duration = speed_clip.duration
-        audio = moviepy.editor.AudioFileClip(self.audio_file)
-        audio.set_duration(duration)
-        speed_clip.audio = audio
-        speed_clip.write_videofile(self.speed_video_file)
-        # destroy
-        del audio
-        del speed_clip
-        try:
-            os.remove(video_without_audio)
-            os.remove(self.audio_file)
-            os.remove(self.imageVideo)
-        except Exception as e:
-            print(e)
-        bar.finish()
-
     def crop_clip(self, clip: moviepy.editor.ImageClip, width=1080 * 4 / 3, height=1080):
+        """
+        剪切图片
+        :param clip:
+        :param width:
+        :param height:
+        :return:
+        """
         w, h = clip.size  # 视频长宽
         w_h = w / h
         if w_h <= width / height:  # 宽度尺寸偏小
@@ -351,7 +278,7 @@ class MovieLib(FfmpegPlugin):
             clip = clip.crop(x_center=w / 2, y_center=h / 2, width=width, height=height)
         return clip
 
-    def image2speed_video(self, width=1080 * 4 / 3, height=1080):
+    def generate_video(self, width=1080 * 4 / 3, height=1080):
         """
         图片直接生成变速视频
         跳过图片生成视频步骤
@@ -367,8 +294,8 @@ class MovieLib(FfmpegPlugin):
             clip = moviepy.editor.AudioFileClip(m)
             audio_clips.append(clip)
         audio_clip = moviepy.editor.concatenate_audioclips(audio_clips)
-        audio_clip.write_audiofile(self.audio_file)
-        audioTime, wave_data = self.audio2data(self.audio_file)
+        audio_clip.write_audiofile(self.temp_audio_file)
+        audioTime, wave_data = self.audio2data(self.temp_audio_file)
         np_time, np_speed = self.frame2speed(audioTime, wave_data)
         time_line = compute_time_line(np_time, np_speed, self.image_list, audio_clip.duration)
 
@@ -386,122 +313,93 @@ class MovieLib(FfmpegPlugin):
         video_clip = moviepy.editor.concatenate_videoclips(image_clips)
         yield 1 / 2
         video_clip.audio = audio_clip
-        video_clip.write_videofile(self.speed_video_file, fps=5)
+        video_clip.write_videofile(self.out_video_file, fps=5)
         yield 1
-        os.remove(self.audio_file)
-        return self.speed_video_file
+        os.remove(self.temp_audio_file)
+        return self.out_video_file
 
-    def image2clip(self, width=1080 * 4 / 3, height=1080, duration=0.25):
-        fps = 1.0 / duration
-        width_height = width / height
+    def generate_video_from_beat(self, width=1080 * 4 / 3, height=1080):
+        """
+        根据librosa.beat库生成节奏相册视频
+        :param width:
+        :param height:
+        :return:
+        """
+        # 生成音频数据
         if len(self.audio_lst) == 0:
-            raise Exception("exists any music")
-        audioClips = []
+            raise Exception("not exists any music")
+        audio_clips = []
         for m in self.audio_lst:
-            audioClip = moviepy.editor.AudioFileClip(m)
-            audioClips.append(audioClip)
-        audioClip = moviepy.editor.concatenate_audioclips(audioClips)
-
+            clip = moviepy.editor.AudioFileClip(m)
+            audio_clips.append(clip)
+        audio_clip = moviepy.editor.concatenate_audioclips(audio_clips)
+        audio_clip.write_audiofile(self.temp_audio_file)
+        time_line = beat_times(self.temp_audio_file)
+        yield 1/4
         self.image_list.sort()
-        bar_setting = ['image2clip: ', Percentage(), Bar('#'), ' ', ETA()]
-        bar = ProgressBar(widgets=bar_setting, maxval=len(self.image_list)).start()
-        videoStartTime = 0
-        videoClips = []
-        fail_pic = []
-        bar_i = 0
-        for imageFileName in self.image_list:
-            bar_i += 1
-            try:
-                imageClip = moviepy.editor.ImageClip(imageFileName)
-                videoClip = imageClip.set_duration(duration)
-                videoClip = videoClip.set_start(videoStartTime)
-                videoClip = self.crop_clip(videoClip, width, height)
-                videoStartTime += duration
-                if 'video_clip' not in locals().keys():
-                    video_clip = videoClip
-                else:
-                    video_clip = moviepy.editor.concatenate_videoclips([video_clip, videoClip])
-                    # 内存不足时，分步写入
-                    if psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024 > 800:
-                        i = 1
-                        temp_video = python_box.FileSys().get_outfile(self.imageVideo, str(i))
-                        while 1:
-                            if os.path.exists(temp_video):
-                                i += 1
-                                temp_video = python_box.FileSys().get_outfile(self.imageVideo, str(i))
-                            else:
-                                self.temp_videos.append(temp_video)
-                                break
-                        video_clip.write_videofile(temp_video, fps=fps)
-                        del video_clip
-            except Exception as e:
-                fail_pic.append(imageFileName)
-                print(e)
-            bar.update(bar_i)
-        if len(self.temp_videos) > 0:
-            videos = []
-            for temp_video in self.temp_videos:
-                video_clip = moviepy.editor.VideoFileClip(temp_video)
-                videos.append(video_clip)
-            video_clip = moviepy.editor.concatenate_videoclips(videos)
-        bar.finish()
-        # 设置音轨长度
-        video_duration = video_clip.duration
-        audio_duration = audioClip.duration
-        if self.audio_leader:
-            video_clip = video_clip.subfx(lambda c: speedx(c, video_duration / audio_duration))
-        else:
-            while audioClip.duration < video_duration:
-                audioClip = moviepy.editor.concatenate_audioclips([audioClip, audioClip])
-            audioClip = audioClip.set_duration(video_duration)
-        video_clip.audio = audioClip
-        video_clip.write_videofile(self.imageVideo, fps=fps)
-        del video_clip
-        for temp in self.temp_videos:
-            try:
-                os.remove(temp)
-            except Exception as e:
-                print(e)
-        return self.imageVideo
+        image_clips = []
+        for i in range(len(self.image_list)):
+            yield 1/4 + i / len(self.image_list) * 1 / 2
+            image_clip = moviepy.editor.ImageClip(self.image_list[i])
+            image_clip.start = time_line[i]
+            image_clip.duration = time_line[i + 1] - time_line[i]
+            image_clip.fps = 1
+            image_clip = self.crop_clip(image_clip, width, height)
+            image_clips.append(image_clip)
 
-    def run(self):
+        video_clip = moviepy.editor.concatenate_videoclips(image_clips)
+        yield 3 / 4
+        video_clip.audio = audio_clip
+        video_clip.write_videofile(self.out_video_file, fps=5)
+        yield 1
+        os.remove(self.temp_audio_file)
+        return self.out_video_file
+
+    def run(self, mode=1):
         """
         批量图片合成clip
         通过bgm识别播放节奏，生成新的clip
+        :param mode: 使用算法 1() 2()
         :return:
         """
-        return self.image2speed_video()
+        if mode == 1:
+            return self.generate_video_from_beat()
+        else:
+            return self.generate_video()
 
 
 if __name__ == "__main__":
     """
     pic to video clip
     """
-    win = gui.ComWin(title="电子视频相册")
     movie_tool = MovieLib()
-    win.add_text("1、选择图片目录。")
-    directory = gui.select_dir("选择图片目录")
-    movie_tool.add_pic(directory)
-    bgm_num = 0
-    try:
-        win.add_text("2、选择音乐个数。")
-        bgm_num = int(gui.input_msg("输入背景音乐个数", 1))
-    except Exception as e:
-        print(e)
-        gui.message().showwarning(title="输入个数格式不正确")
-        win.root.quit()
-        exit(1)
-    for i in range(bgm_num):
-        win.add_text("3、选择音乐文件。")
-        file = gui.select_file("选择音乐文件")
-        if file:
-            movie_tool.add_bgm(file)
-        else:
-            break
-    progressbar = Progressbar(win.root)
-    progressbar.pack()
-    win.add_text(rf"生成中。。。")
-    for i in movie_tool.run():
-        progressbar["value"] = i * 100
-    win.add_text(rf"4、完成，生成视频在。{movie_tool.speed_video_file}")
-    gui.message().showinfo(title="完成", message=f"文件保存在：{movie_tool.speed_video_file}")
+    # 图形界面处理
+    win = gui.ComWin(title="电子视频相册")
+    text = win.add_text("")
+    text_change = lambda: text.config(
+        text=f"音乐：{[os.path.basename(f) for f in movie_tool.audio_lst]}\n图片：{set(os.path.dirname(f) for f in movie_tool.image_list)}")
+    win.add_buton("选择图片目录", lambda: (
+        movie_tool.add_pic(gui.select_dir("选择图片所在位置目录")), text_change()
+    ))
+    win.add_buton("选择背景音乐", lambda: (
+        movie_tool.add_bgm(gui.select_file("选择音乐文件")), text_change()
+    ))
+    mode = {'': 1}
+    mode_button = win.add_buton(f"模式{mode['']}：{'节奏优先' if mode[''] == 1 else '时长对齐'}", lambda: (
+        mode.__setitem__('', 2 if mode.get('') == 1 else 1),
+        mode_button.config(text=f"模式{mode['']}：{'节奏优先' if mode[''] == 1 else '时长对齐'}")))
+
+
+    def on_button_click():
+        progressbar = Progressbar(win.root)
+        win.add_text(rf"生成中。。。")
+        progressbar.pack()
+        for i in movie_tool.run(mode.get('')):
+            progressbar["value"] = i * 100
+        win.add_text(rf"4、完成，生成视频在。{movie_tool.out_video_file}")
+        gui.message().showinfo(title="完成", message=f"文件保存在：{movie_tool.out_video_file}")
+
+
+    win.add_buton("开始", lambda: (
+        threading.Thread(target=on_button_click).start(),
+    ))
