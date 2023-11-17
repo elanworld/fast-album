@@ -234,6 +234,8 @@ class MovieLib(FfmpegPlugin):
         self.out_video_file = os.path.join(directory, f"相册视频.mp4")
 
     def add_bgm(self, audio_file):
+        if not audio_file:
+            return
         self.audio_lst.append(audio_file)
         if not self.out_video_file:
             self.set_out(os.path.dirname(audio_file))
