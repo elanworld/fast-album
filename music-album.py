@@ -1,20 +1,19 @@
 # 根据图片和音乐合成带节奏的相册视频
-# for pyinstaller enviroment
 import re
 import threading
+import traceback
 import wave
 from tkinter.ttk import Progressbar
 from typing import Tuple, Union, Any
 
-import moviepy.audio.fx.all
-import moviepy.editor
-import numpy as np
-from progressbar import *
-
-from beat_catch import beat_times
 from common import gui
 from common import python_box
+import numpy as np
+from progressbar import *
+from skimage import transform
+from beat_catch import beat_times
 
+# pyinstaller import
 from moviepy.audio.fx.audio_fadein import audio_fadein
 from moviepy.audio.fx.audio_fadeout import audio_fadeout
 from moviepy.audio.fx.audio_left_right import audio_left_right
@@ -44,14 +43,20 @@ from moviepy.video.fx.mask_or import mask_or
 from moviepy.video.fx.mirror_x import mirror_x
 from moviepy.video.fx.mirror_y import mirror_y
 from moviepy.video.fx.painting import painting
-from moviepy.video.fx.resize import resize
 from moviepy.video.fx.rotate import rotate
 from moviepy.video.fx.scroll import scroll
-from moviepy.video.fx.speedx import speedx
 from moviepy.video.fx.supersample import supersample
 from moviepy.video.fx.time_mirror import time_mirror
 from moviepy.video.fx.time_symmetrize import time_symmetrize
+from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+from moviepy.video.fx.resize import resize
+from moviepy.video.compositing.concatenate import concatenate_videoclips
+from moviepy.video.fx.speedx import speedx
+from moviepy.video.VideoClip import ImageClip, ColorClip
+import moviepy.audio.fx.all
 import moviepy.editor
+
+
 
 class FfmpegPlugin:
     def __init__(self):
@@ -228,18 +233,25 @@ class MovieLib(FfmpegPlugin):
         self.out_video_file = None
         # 速度变化敏感度
         self.sens = 0.6
+        # 视频适配无黑边
+        self.adapt_full_view = False
+
+    def set_adapt_full_view(self, adapt_full_view):
+        self.adapt_full_view = adapt_full_view
 
     def set_out(self, directory):
         self.temp_audio_file = os.path.join(directory, "tmp.wav")
         self.out_video_file = os.path.join(directory, f"相册视频.mp4")
 
     def add_bgm(self, audio_file):
+        if not audio_file:
+            return
         self.audio_lst.append(audio_file)
-        if not self.out_video_file:
-            self.set_out(os.path.dirname(audio_file))
 
     def add_pic(self, pic_dir):
         self.image_list.extend(sorted(python_box.dir_list(pic_dir, "jpg$", walk=True)))
+        if not self.out_video_file:
+            self.set_out(os.path.dirname(pic_dir))
 
     def audio2data(self, audio):
         """
@@ -294,6 +306,39 @@ class MovieLib(FfmpegPlugin):
         np_speed = np_speed / np.mean(np_speed)
         return np_time, np_speed
 
+    def resize_image_with_padding(self, image_clip, new_width, new_height):
+        """
+        设置照片尺寸 黑边补充
+        :param image_clip:
+        :param new_width:
+        :param new_height:
+        :return:
+        """
+        # Get the image array from ImageClip
+        image = np.array(image_clip.get_frame(0))
+        # Get the original image dimensions
+        original_height, original_width = image.shape[:2]
+        # Calculate the scale factor for resizing
+        scale_factor_width = new_width / original_width
+        scale_factor_height = new_height / original_height
+        scale_factor = min(scale_factor_width, scale_factor_height)
+        # Calculate the new dimensions after resizing
+        adjusted_width = int(original_width * scale_factor)
+        adjusted_height = int(original_height * scale_factor)
+        # Resize the image using skimage.transform.resize
+        resized_image = transform.resize(image, (adjusted_height, adjusted_width), mode='constant', anti_aliasing=True)
+        # Create a new image with black background
+        padded_image = np.zeros((new_height, new_width, 3), dtype=np.uint8)
+        # Calculate the position to place the resized image
+        start_x = (new_width - adjusted_width) // 2
+        start_y = (new_height - adjusted_height) // 2
+        # Place the resized image on the new image with black background
+        padded_image[start_y:start_y + adjusted_height, start_x:start_x + adjusted_width] = (
+                resized_image * 255).astype(np.uint8)
+        # Convert the resulting NumPy array back to an ImageClip
+        result_image_clip = ImageClip(padded_image)
+        return result_image_clip
+
     def crop_clip(self, clip: moviepy.editor.ImageClip, width=1080 * 4 / 3, height=1080):
         """
         剪切图片
@@ -304,14 +349,19 @@ class MovieLib(FfmpegPlugin):
         """
         w, h = clip.size  # 视频长宽
         w_h = w / h
-        if w_h <= width / height:  # 宽度尺寸偏小
-            clip = clip.resize(width=width)
-            w, h = clip.size
-            clip = clip.crop(x_center=w / 2, y_center=h / 2, width=width, height=height)
-        if w_h > width / height:
-            clip = clip.resize(height=height)
-            w, h = clip.size
-            clip = clip.crop(x_center=w / 2, y_center=h / 2, width=width, height=height)
+
+        if self.adapt_full_view:
+            if w_h <= width / height:  # 宽度尺寸偏小
+                clip = clip.resize(width=width)
+                w, h = clip.size
+                clip = clip.crop(x_center=w / 2, y_center=h / 2, width=width, height=height)
+            else:
+                clip = clip.resize(height=height)
+                w, h = clip.size
+                clip = clip.crop(x_center=w / 2, y_center=h / 2, width=width, height=height)
+        else:
+            return self.resize_image_with_padding(clip, int(width), int(height))
+
         return clip
 
     def generate_video(self, width=1080 * 4 / 3, height=1080):
@@ -341,10 +391,10 @@ class MovieLib(FfmpegPlugin):
         for i in range(len(self.image_list)):
             yield 1 / 4 + i / len(self.image_list) * 1 / 2
             image_clip = moviepy.editor.ImageClip(self.image_list[i])
+            image_clip = self.crop_clip(image_clip, width, height)
             image_clip.start = sum(time_line[0:i])
             image_clip.duration = time_line[i]
             image_clip.fps = 1
-            image_clip = self.crop_clip(image_clip, width, height)
             image_clips.append(image_clip)
 
         video_clip = moviepy.editor.concatenate_videoclips(image_clips)
@@ -381,10 +431,10 @@ class MovieLib(FfmpegPlugin):
             image_clip = moviepy.editor.ImageClip(self.image_list[i])
             if i + 1 > len(time_line) - 1:
                 break
+            image_clip = self.crop_clip(image_clip, width, height)
             image_clip.start = time_line[i]
             image_clip.duration = time_line[i + 1] - time_line[i]
             image_clip.fps = 1
-            image_clip = self.crop_clip(image_clip, width, height)
             image_clips.append(image_clip)
         video_clip = moviepy.editor.concatenate_videoclips(image_clips)
         yield 3 / 4
@@ -428,19 +478,27 @@ if __name__ == "__main__":
     mode_button = win.add_buton(f"模式{mode['']}：{'节奏优先' if mode[''] == 1 else '时长对齐'}", lambda: (
         mode.__setitem__('', 2 if mode.get('') == 1 else 1),
         mode_button.config(text=f"模式{mode['']}：{'节奏优先' if mode[''] == 1 else '时长对齐'}")))
+    adapt_button = win.add_buton(f"画幅：{'视频优先' if movie_tool.adapt_full_view else '照片优先'}", lambda: (
+        movie_tool.set_adapt_full_view(not movie_tool.adapt_full_view),
+        adapt_button.config(text=f"画幅：{'视频优先' if movie_tool.adapt_full_view else '照片优先'}")))
 
 
     def on_button_click():
-        if len(movie_tool.image_list) == 0 or len(movie_tool.audio_lst) == 0:
-            gui.message().showinfo(title="配置未完成", message=f"未配置图片和背景音乐")
-            return
-        progressbar = Progressbar(win.root)
-        win.add_text(rf"生成中。。。")
-        progressbar.pack()
-        for i in movie_tool.run(mode.get('')):
-            progressbar["value"] = i * 100
-        win.add_text(rf"完成!生成视频在 {movie_tool.out_video_file}")
-        gui.message().showinfo(title="完成", message=f"文件保存在：{movie_tool.out_video_file}")
+        try:
+            if len(movie_tool.image_list) == 0 or len(movie_tool.audio_lst) == 0:
+                gui.message().showinfo(title="配置未完成", message=f"未配置图片和背景音乐")
+                return
+            progressbar = Progressbar(win.root)
+            win.add_text(rf"生成中。。。")
+            progressbar.pack()
+            for i in movie_tool.run(mode.get('')):
+                progressbar["value"] = i * 100
+            win.add_text(rf"完成!生成视频在 {movie_tool.out_video_file}")
+            gui.message().showinfo(title="完成", message=f"文件保存在：{movie_tool.out_video_file}")
+        except Exception as e:
+            traceback.print_exc()
+            gui.message().showinfo(title="错误", message=e)
+            win.add_text(rf"错误")
 
 
     win.add_buton("开始", lambda: (

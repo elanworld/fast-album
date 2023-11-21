@@ -4,3 +4,4 @@ progressbar
 psutil
 pyinstaller
 librosa
+scikit-image
