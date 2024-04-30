@@ -458,6 +458,12 @@ class MovieLib(FfmpegPlugin):
             return self.generate_video()
 
 
+def for_gen_code():
+    gui.ComWin
+    gui.select_dir
+    gui.message
+
+
 if __name__ == "__main__":
     """
     pic to video clip
